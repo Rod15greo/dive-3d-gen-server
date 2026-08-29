@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.modal/
+.pytest_cache/
+
+*.glb
+Generated_*
+diagnostics_*/
+inspection_*/
+
+.DS_Store
+Thumbs.db
