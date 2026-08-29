@@ -3,6 +3,15 @@
 Modal-hosted image/text-to-3D API that returns textured GLB assets. It powers
 the official Unity package and Blender add-on, but any HTTP client can use it.
 
+## Complete guide
+
+Download the Portuguese end-to-end guide for installing the plugins, using a
+shared server, deploying your own Modal server, and managing API keys:
+[Guia_Dive_3D_Gen.pdf](docs/Guia_Dive_3D_Gen.pdf).
+
+The editable source is [GUIA_DE_USO.md](docs/GUIA_DE_USO.md). Regenerate the
+PDF after documentation changes with `python docs/generate_user_guide.py`.
+
 ## Models
 
 | Model | Input | Output |
