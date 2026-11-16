@@ -19,10 +19,12 @@ na importacao do GLB dentro de cada editor.
 - Plugin Unity: [github.com/Rod15greo/dive-3d-gen-unity](https://github.com/Rod15greo/dive-3d-gen-unity)
 - Add-on Blender: [github.com/Rod15greo/dive-3d-gen-blender](https://github.com/Rod15greo/dive-3d-gen-blender)
 
-O endpoint hospedado atualmente e:
+Os plugins nao trazem endpoint pre-configurado. Cada operador implanta o
+servidor na propria conta Modal (secao 7) e informa aos usuarios a URL gerada,
+no formato:
 
 ```text
-https://rodmeca150102--dive-3d-gen.modal.run
+https://SEU-WORKSPACE--dive-3d-gen.modal.run
 ```
 
 O endpoint nao e suficiente para gerar assets: cada usuario precisa de uma API
@@ -68,8 +70,8 @@ selecionar o arquivo package.json.
 ### Gerar
 
 1. Abra Tools > Dive 3D Gen.
-2. Mantenha o Server URL padrao para usar o servidor hospedado, ou informe o
-   endpoint da sua propria instancia.
+2. Informe em Server URL o endpoint do servidor que voce usa (o campo comeca
+   vazio e a geracao fica bloqueada ate ser preenchido).
 3. Cole sua API Key.
 4. Escolha modelo e qualidade.
 5. Selecione uma imagem. TRELLIS tambem permite preencher Prompt (texto).
@@ -94,7 +96,7 @@ Requisitos: Blender 4.2 ou superior.
 
 ### Gerar
 
-1. Preencha Server URL e API Key.
+1. Preencha Server URL (obrigatorio; o campo comeca vazio) e API Key.
 2. Escolha modelo, qualidade e imagem de referencia. TRELLIS tambem aceita
    somente texto.
 3. Clique em Generate 3D.
@@ -151,6 +153,15 @@ dive-3d-gen-api-keys e dive-3d-gen-huggingface. Eles sao isolados por conta
 Modal. Para alterar os nomes, defina DIVE3D_APP_NAME, DIVE3D_MODEL_VOLUME,
 DIVE3D_API_KEYS_DICT e DIVE3D_HF_SECRET antes do deploy.
 
+Outras variaveis opcionais, tambem lidas no momento do deploy:
+
+- DIVE3D_SCALEDOWN_WINDOW: segundos que um container TRELLIS/Hunyuan fica
+  ocioso antes de desligar (padrao 300). Valores maiores evitam cold start entre
+  geracoes seguidas, mas cobram GPU ociosa.
+- DIVE3D_MAX_IMAGE_MB: tamanho maximo da imagem enviada (padrao 20).
+- DIVE3D_HUNYUAN_TRACE: use 1 apenas para depuracao. Grava a imagem enviada e
+  etapas intermediarias do Hunyuan no Modal Volume. Desligado por padrao.
+
 ## 8. API para integracoes proprias
 
 Envie POST /generate como multipart/form-data e inclua o header X-API-Key.
@@ -173,7 +184,12 @@ Campos aceitos:
 - model: sf3d, trellis ou hunyuan.
 - quality: fast, balanced ou high.
 - prompt: texto opcional, suportado somente por TRELLIS.
-- image: imagem opcional, obrigatoria para SF3D e Hunyuan.
+- image: imagem opcional, obrigatoria para SF3D e Hunyuan. PNG, JPEG ou WEBP
+  (BMP, TGA, TIFF, PSD e GIF tambem sao aceitos), ate 20 MB por padrao.
+- prompt: ate 1000 caracteres.
+
+Erros: 403 (key invalida), 400 (campos invalidos), 413 (imagem grande demais),
+415 (arquivo que nao e imagem suportada).
 
 ## 9. Custos e operacao
 
@@ -186,8 +202,10 @@ de API keys conforme seu orcamento.
 - TRELLIS pode levar mais tempo porque inclui reconstrucao, conversao e bake da
   textura PBR.
 
-O servidor reduz a zero quando nao ha trabalho. Isso evita custo de GPU ociosa,
-mas uma nova geracao pode precisar iniciar um container antes de processar.
+O servidor reduz a zero quando nao ha trabalho. Containers TRELLIS e Hunyuan
+continuam ligados por ate 5 minutos (DIVE3D_SCALEDOWN_WINDOW) apos a ultima
+geracao para reaproveitar os modelos carregados; esse tempo ocioso e cobrado.
+Depois disso, uma nova geracao precisa iniciar um container antes de processar.
 
 ## 10. Solucao de problemas
 

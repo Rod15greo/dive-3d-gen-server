@@ -40,7 +40,8 @@ python -m modal deploy main.py
 
 The first call for each model downloads its weights to the Modal Volume and can
 take substantially longer than later calls. Modal prints the public endpoint at
-the end of deployment.
+the end of deployment. The Unity package and Blender add-on ship with an empty
+Server URL, so give this endpoint to your users along with their API keys.
 
 Create a client API key after deploying:
 
@@ -70,6 +71,27 @@ $env:DIVE3D_HF_SECRET = "my-huggingface-secret"
 python -m modal deploy main.py
 ```
 
+These names are passed into the containers through `Image.env`, so the web API
+and the model functions always use the same Volume and Dict.
+
+## Runtime settings
+
+Also read at `modal deploy` time:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DIVE3D_SCALEDOWN_WINDOW` | `300` | Seconds a TRELLIS/Hunyuan GPU container stays idle before shutting down. |
+| `DIVE3D_MAX_IMAGE_MB` | `20` | Maximum uploaded image size. |
+| `DIVE3D_HUNYUAN_TRACE` | `0` | `1` stores the user's input image and intermediate Hunyuan outputs under `/models/diagnostics` in the Volume. Debug only. |
+
+**Why 300 s idle window:** loading TRELLIS or Hunyuan weights into a fresh
+container takes long, so keeping the container warm lets a user iterate on
+several generations without paying a cold start each time. Every idle second is
+billed A10G time, though. The previous value (600 s) charged up to 10 minutes of
+idle GPU after each burst of work; 300 s keeps a typical editing session warm
+while halving the worst-case idle cost. Use `0`-`60` for occasional use and
+lower cost, or raise it for heavy interactive sessions.
+
 ## API
 
 `POST /generate` accepts `multipart/form-data` with an `X-API-Key` header.
@@ -78,8 +100,11 @@ python -m modal deploy main.py
 | --- | --- |
 | `model` | `sf3d`, `trellis`, or `hunyuan` |
 | `quality` | `fast`, `balanced`, or `high` |
-| `prompt` | Optional text; supported by TRELLIS |
-| `image` | Optional image; required by SF3D and Hunyuan |
+| `prompt` | Optional text (up to 1000 characters); supported by TRELLIS |
+| `image` | Optional image; required by SF3D and Hunyuan. PNG, JPEG or WEBP (BMP, TGA, TIFF, PSD and GIF also accepted), up to `DIVE3D_MAX_IMAGE_MB` |
+
+Errors: `403` invalid/revoked key, `400` invalid fields, `413` image too
+large, `415` file is not a supported image.
 
 ```bash
 curl -X POST "https://YOUR-ENDPOINT/generate" \
