@@ -9,12 +9,15 @@ Saída:   bytes do arquivo .glb
 """
 
 import io
+import os
 from pathlib import Path
 
 import torch
 from PIL import Image
 
 MODEL_CACHE = "/models/sf3d"
+# Mesmo nome de Volume usado por main.py (repassado ao container via .env()).
+MODEL_VOLUME_NAME = os.getenv("DIVE3D_MODEL_VOLUME", "dive-3d-gen-models")
 MODEL_ID = "stabilityai/stable-fast-3d"
 
 _model = None  # singleton — reutilizado entre requisições no mesmo container
@@ -35,7 +38,7 @@ def _load_model():
         snapshot_download(MODEL_ID, local_dir=MODEL_CACHE)
         # Persiste no volume para próximos cold starts
         import modal
-        modal.Volume.from_name("dive-3d-gen-models").commit()
+        modal.Volume.from_name(MODEL_VOLUME_NAME).commit()
 
     _model = SF3D.from_pretrained(
         MODEL_CACHE,

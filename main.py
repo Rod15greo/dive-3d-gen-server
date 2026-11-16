@@ -20,6 +20,23 @@ APP_NAME = os.getenv("DIVE3D_APP_NAME", "dive-3d-gen")
 MODEL_VOLUME_NAME = os.getenv("DIVE3D_MODEL_VOLUME", "dive-3d-gen-models")
 API_KEYS_DICT_NAME = os.getenv("DIVE3D_API_KEYS_DICT", "dive-3d-gen-api-keys")
 HUGGINGFACE_SECRET_NAME = os.getenv("DIVE3D_HF_SECRET", "dive-3d-gen-huggingface")
+# Tempo (s) que um container TRELLIS/Hunyuan fica ocioso (GPU paga) antes de desligar.
+SCALEDOWN_WINDOW = int(os.getenv("DIVE3D_SCALEDOWN_WINDOW", "300"))
+# Limite de upload de imagem em MB.
+MAX_IMAGE_MB = float(os.getenv("DIVE3D_MAX_IMAGE_MB", "20"))
+# "1" grava diagnósticos do Hunyuan (inclui a imagem enviada) no Volume. Desligado por padrão.
+HUNYUAN_TRACE = os.getenv("DIVE3D_HUNYUAN_TRACE", "0")
+
+# Variáveis lidas em tempo de deploy precisam ser repassadas aos containers,
+# senão o código remoto volta aos nomes padrão.
+RUNTIME_ENV = {
+    "DIVE3D_APP_NAME": APP_NAME,
+    "DIVE3D_MODEL_VOLUME": MODEL_VOLUME_NAME,
+    "DIVE3D_API_KEYS_DICT": API_KEYS_DICT_NAME,
+    "DIVE3D_HF_SECRET": HUGGINGFACE_SECRET_NAME,
+    "DIVE3D_MAX_IMAGE_MB": str(MAX_IMAGE_MB),
+    "DIVE3D_HUNYUAN_TRACE": HUNYUAN_TRACE,
+}
 
 app = modal.App(APP_NAME)
 
@@ -46,6 +63,7 @@ sf3d_image = (
         # --no-build-isolation: usa torch/numpy já instalados durante o build das extensões C++
         "cd /sf3d && USE_CUDA=1 TORCH_CUDA_ARCH_LIST=8.6 CPATH=/usr/local/cuda/include:${CPATH:-} pip install -r requirements.txt --no-build-isolation --extra-index-url https://download.pytorch.org/whl/cu121",
     )
+    .env(RUNTIME_ENV)
     .add_local_dir("models", remote_path="/root/models")
 )
 
@@ -70,6 +88,7 @@ trellis_image = (
         "git clone --depth=1 --recurse-submodules https://github.com/autonomousvision/mip-splatting.git /tmp/mip-splatting",
         "cd /tmp/mip-splatting && TORCH_CUDA_ARCH_LIST=8.6 CPATH=/usr/local/cuda/include:${CPATH:-} pip install submodules/diff-gaussian-rasterization --no-build-isolation",
     )
+    .env(RUNTIME_ENV)
     .add_local_dir("models", remote_path="/root/models")
 )
 
@@ -107,12 +126,14 @@ hunyuan_image = (
         "cd /hunyuan/hy3dgen/texgen/custom_rasterizer && TORCH_CUDA_ARCH_LIST=8.6 CPATH=/usr/local/cuda/include:${CPATH:-} python3 setup.py install",
         "cd /hunyuan/hy3dgen/texgen/differentiable_renderer && TORCH_CUDA_ARCH_LIST=8.6 CPATH=/usr/local/cuda/include:${CPATH:-} python3 setup.py install",
     )
+    .env(RUNTIME_ENV)
     .add_local_dir("models", remote_path="/root/models")
 )
 
 web_image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install("fastapi", "python-multipart", "Pillow")
+    .env(RUNTIME_ENV)
 )
 
 # ---------------------------------------------------------------------------
@@ -141,7 +162,7 @@ def run_sf3d(image_bytes: bytes, quality: str = "balanced") -> bytes:
     volumes={"/models": model_volume},
     secrets=[modal.Secret.from_name(HUGGINGFACE_SECRET_NAME)],
     timeout=1200,
-    scaledown_window=600,
+    scaledown_window=SCALEDOWN_WINDOW,
 )
 def run_trellis(prompt: Optional[str], image_bytes: Optional[bytes], quality: str = "balanced") -> bytes:
     import sys
@@ -153,7 +174,7 @@ def run_trellis(prompt: Optional[str], image_bytes: Optional[bytes], quality: st
     return trellis_generate(prompt=prompt, image=pil_image, quality=quality)
 
 
-@app.function(gpu="A10G", image=hunyuan_image, volumes={"/models": model_volume}, timeout=1200, scaledown_window=600)
+@app.function(gpu="A10G", image=hunyuan_image, volumes={"/models": model_volume}, timeout=1200, scaledown_window=SCALEDOWN_WINDOW)
 def run_hunyuan(prompt: Optional[str], image_bytes: Optional[bytes], quality: str = "balanced") -> bytes:
     import sys
     sys.path.insert(0, "/hunyuan")
@@ -179,7 +200,18 @@ def serve():
     MODELS = {"sf3d": run_sf3d, "trellis": run_trellis, "hunyuan": run_hunyuan}
     MODEL_SUPPORTS_TEXT = {"sf3d": False, "trellis": True, "hunyuan": False}
 
+    # Formatos verificados pelo conteúdo (não pelo Content-Type, que os clientes
+    # nem sempre preenchem). Inclui formatos de textura comuns enviados pelo Unity.
+    ALLOWED_IMAGE_FORMATS = {"PNG", "JPEG", "WEBP", "BMP", "TGA", "TIFF", "PSD", "GIF"}
+    ALLOWED_QUALITIES = {"fast", "balanced", "high"}
+    MAX_IMAGE_BYTES = int(MAX_IMAGE_MB * 1024 * 1024)
+    MAX_PROMPT_CHARS = 1000
+
     def _validate_key(key: str) -> bool:
+        # A busca é feita por chave no modal.Dict (hash remoto), não por
+        # comparação de strings local; limitar o formato evita consultas abusivas.
+        if not key or len(key) > 128:
+            return False
         try:
             entry = api_keys_store.get(key)
             return bool(entry and entry.get("active", True))
@@ -206,8 +238,27 @@ def serve():
             raise HTTPException(status_code=400, detail=f"'{model}' requer imagem.")
         if not prompt and not image:
             raise HTTPException(status_code=400, detail="Envie prompt ou imagem.")
+        if quality not in ALLOWED_QUALITIES:
+            raise HTTPException(status_code=400, detail="quality deve ser fast, balanced ou high.")
+        if prompt and len(prompt) > MAX_PROMPT_CHARS:
+            raise HTTPException(status_code=400, detail=f"Prompt excede {MAX_PROMPT_CHARS} caracteres.")
 
-        image_bytes = await image.read() if image else None
+        image_bytes = None
+        if image:
+            image_bytes = await image.read(MAX_IMAGE_BYTES + 1)
+            if len(image_bytes) > MAX_IMAGE_BYTES:
+                raise HTTPException(status_code=413, detail=f"Imagem excede {MAX_IMAGE_MB:g} MB.")
+            try:
+                from PIL import Image as PILImage
+                with PILImage.open(io.BytesIO(image_bytes)) as probe:
+                    if probe.format not in ALLOWED_IMAGE_FORMATS:
+                        raise ValueError(probe.format)
+                    probe.verify()
+            except Exception:
+                raise HTTPException(
+                    status_code=415,
+                    detail="Arquivo de imagem inválido ou formato não suportado (use PNG, JPEG ou WEBP).",
+                )
 
         try:
             entry = api_keys_store[x_api_key]

@@ -12,10 +12,14 @@ from PIL import Image
 MODEL_CACHE = "/models/hunyuan"
 MODEL_ID = "tencent/Hunyuan3D-2"
 
-# Temporary end-to-end evidence capture for the texture investigation. It is
-# deliberately limited to Hunyuan jobs and stored under the existing private
-# Modal volume so the intermediate Paint outputs can be inspected directly.
-TRACE_ENABLED = True
+# Mesmo nome de Volume usado por main.py (repassado ao container via .env()).
+MODEL_VOLUME_NAME = os.getenv("DIVE3D_MODEL_VOLUME", "dive-3d-gen-models")
+
+# Optional end-to-end evidence capture for texture debugging. When enabled it
+# stores the user's input image and intermediate Paint outputs in the private
+# Modal volume, so it is OFF by default. Enable with DIVE3D_HUNYUAN_TRACE=1
+# before `modal deploy`.
+TRACE_ENABLED = os.getenv("DIVE3D_HUNYUAN_TRACE", "0").strip().lower() in ("1", "true", "yes", "on")
 TRACE_ROOT = "/models/diagnostics"
 
 _shape_pipeline = None
@@ -132,12 +136,14 @@ def _trace_mesh(trace_dir: Path, name: str, mesh):
 
 
 def _commit_trace(trace_dir: Path, summary: dict):
+    if not TRACE_ENABLED:
+        return
     trace_dir.mkdir(parents=True, exist_ok=True)
     (trace_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     if TRACE_ENABLED:
         import modal
 
-        modal.Volume.from_name("dive-3d-gen-models").commit()
+        modal.Volume.from_name(MODEL_VOLUME_NAME).commit()
         _trace(f"run={trace_dir.name} diagnostics committed to volume")
 
 
@@ -216,7 +222,7 @@ def _ensure_model_cache():
 
     import modal
 
-    modal.Volume.from_name("dive-3d-gen-models").commit()
+    modal.Volume.from_name(MODEL_VOLUME_NAME).commit()
 
 
 def _texture_subfolder_for_quality(quality: str) -> str:

@@ -1,6 +1,6 @@
 # Dependências locais para desenvolvimento/testes
 # O servidor em produção usa as imagens Docker definidas em main.py
-modal>=0.64.0
+modal>=0.73.0  # scaledown_window e Image.env exigem versões recentes
 fastapi
 python-multipart
 Pillow

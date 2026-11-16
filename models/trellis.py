@@ -8,6 +8,8 @@ from typing import Optional
 from PIL import Image
 
 MODEL_CACHE = "/models/trellis"
+# Mesmo nome de Volume usado por main.py (repassado ao container via .env()).
+MODEL_VOLUME_NAME = os.getenv("DIVE3D_MODEL_VOLUME", "dive-3d-gen-models")
 IMAGE_MODEL_ID = "microsoft/TRELLIS-image-large"
 TEXT_MODEL_ID = "microsoft/TRELLIS-text-large"
 
@@ -37,7 +39,7 @@ def _ensure_model(model_id: str, name: str) -> str:
 
     import modal
 
-    modal.Volume.from_name("dive-3d-gen-models").commit()
+    modal.Volume.from_name(MODEL_VOLUME_NAME).commit()
     return model_path
 
 
